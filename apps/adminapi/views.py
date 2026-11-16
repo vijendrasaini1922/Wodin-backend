@@ -94,7 +94,7 @@ class CustomerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         qs = User.objects.filter(role=Role.CUSTOMER, is_guest=False, is_active=True).annotate(orders_count=Count("orders"))
         q = self.request.query_params.get("q")
         if q:
-            qs = qs.filter(Q(phone__icontains=q) | Q(full_name__icontains=q) | Q(email__icontains=q))
+            qs = qs.filter(Q(phone__icontains=q) | Q(full_name__icontains=q) | Q(email__icontains=q))  # "g:" placeholders never match a typed number
         return qs.order_by("-created_at")
 
     @action(detail=True, methods=["get"])
@@ -114,10 +114,22 @@ class StaffUserViewSet(mixins.ListModelMixin, mixins.UpdateModelMixin, mixins.Cr
         return User.objects.exclude(role=Role.CUSTOMER).order_by("role", "phone")
 
     def create(self, request, *args, **kwargs):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.core.validators import validate_email
+
+        from apps.accounts.google_auth import provision_staff
         from apps.accounts.phone import normalise_phone
         role = request.data.get("role")
         if role not in {r for r in Role.values if r != Role.CUSTOMER}:
             raise ValidationError({"role": "Choose a staff role."})
+        email = (request.data.get("email") or "").strip()
+        if email:  # Google sign-in: the person claims this account by signing in with this Google email
+            try:
+                validate_email(email)
+            except DjangoValidationError:
+                raise ValidationError({"email": "Enter a valid email address."})
+            user, created = provision_staff(email, role, request.data.get("full_name", ""))
+            return Response(StaffUserSerializer(user).data, status=201 if created else 200)
         user, created = User.objects.get_or_create(phone=normalise_phone(request.data.get("phone")))
         user.role, user.full_name = role, request.data.get("full_name", user.full_name)
         user.is_staff = role == Role.ADMIN

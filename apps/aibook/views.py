@@ -113,6 +113,8 @@ def _apply(book: AIBook, data, creating=False) -> None:
     if "size" in data:
         if data["size"] not in AIBook.Size.values:
             errors["size"] = "Choose portrait, square or landscape."
+        elif book.project_id and data["size"] != book.size:
+            errors["size"] = "This book follows the shape the customer chose, so it cannot be changed."
         else:
             book.size = data["size"]
     if "page_count" in data:
@@ -157,6 +159,33 @@ class BookDetailView(APIView):
         services.delete_files(book)
         book.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class BookPagesView(APIView):
+    permission_classes = [IsSignedIn]
+
+    def get(self, request, pk):
+        book = _book(request, pk)
+        photos = [_photo(p) for p in book.photos.filter(status=AIBookPhoto.Status.READY)]
+        return Response({"pages": book.pages or [], "photos": photos})
+
+    def put(self, request, pk):
+        book = _book(request, pk)
+        if book.status in BUSY:
+            raise ValidationError({"detail": "The AI is working on this book. Please wait."})
+        pages = request.data
+        if not isinstance(pages, list):
+            raise ValidationError({"pages": "Pages must be a list of page objects."})
+        book.pages = pages
+        pdf_key, pdf_size, view_keys, report = services.render_book(book, pages)
+        book.pdf_key, book.pdf_size, book.view_keys = pdf_key, pdf_size, view_keys
+        if book.summary:
+            book.summary.update(report)
+        else:
+            book.summary = report
+        book.status = AIBook.Status.READY
+        book.save()
+        return Response(_detail(book))
 
 
 class BookPhotosView(APIView):

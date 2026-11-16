@@ -41,11 +41,13 @@ class AdminOrderSerializer(serializers.ModelSerializer):
         from apps.projects.services import latest_valid_approval
         item = obj.items.first()
         a = latest_valid_approval(item.project) if item else None
-        return {"revision_number": a.revision.number, "approved_at": a.approved_at, "by": a.user.phone} if a else None
+        return {"revision_number": a.revision.number, "approved_at": a.approved_at,
+                "by": a.user.display_phone or a.user.email} if a else None
 
 
 class CustomerSerializer(serializers.ModelSerializer):
     orders_count = serializers.IntegerField(read_only=True)
+    phone = serializers.CharField(source="display_phone", read_only=True)
 
     class Meta:
         model = User
@@ -54,6 +56,8 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class StaffUserSerializer(serializers.ModelSerializer):
+    phone = serializers.CharField(source="display_phone", read_only=True)
+
     class Meta:
         model = User
         fields = ["id", "phone", "full_name", "email", "role", "is_active"]

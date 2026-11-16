@@ -49,6 +49,14 @@ def set_status(order: Order, new_status: str, actor=None, note: str = "") -> Ord
     previous = order.status
     order.status = new_status
     order.save(update_fields=["status", "updated_at"])
+
+    if new_status == S.CANCELLED:
+        from apps.projects.models import BookProject
+        for item in order.items.select_related("project"):
+            if item.project and item.project.status != BookProject.Status.CANCELLED:
+                item.project.status = BookProject.Status.CANCELLED
+                item.project.save(update_fields=["status", "updated_at"])
+
     from apps.notifications import audit, service as notifications
 
     audit.log("order.status_changed", actor=actor, obj=order, from_status=previous, to_status=new_status, note=note)
@@ -61,15 +69,15 @@ def create_order_for_project(project, coupon_code: str = "") -> Order:
     if hasattr(project, "order_item"):
         return project.order_item.order
     user = project.user
-    # An order is only accepted for an OTP-verified phone number; guests verify first (their data is then merged).
-    if user.is_guest or not user.phone:
-        raise ValidationError({"detail": "Please verify your mobile number with the OTP before submitting.",
+    # An order is only accepted for a signed-in (Google or OTP-verified) account; guests sign in first (their data is then merged).
+    if user.is_guest:
+        raise ValidationError({"detail": "Please sign in before submitting.",
                                "code": "phone_verification_required"})
     snap = pricing.quote(variant_id=project.variant_id, page_count=project.page_count,
                          paper_id=project.paper_id, copies=project.copies,
                          addon_ids=project.addon_ids, coupon_code=coupon_code)
     order = Order.objects.create(
-        user=user, contact_phone=user.phone, contact_name=user.full_name, contact_email=user.email,
+        user=user, contact_phone=user.display_phone, contact_name=user.full_name, contact_email=user.email,
         total_amount=snap["total"], price_snapshot=snap, coupon_code=snap["coupon"])
     OrderItem.objects.create(
         order=order, project=project, quantity=project.copies,

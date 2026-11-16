@@ -1,4 +1,4 @@
-"""Send one real OTP through the configured provider to verify MSG91 setup.
+"""Send one real OTP through the configured provider (WhatsApp or MSG91) to verify setup.
 
     python manage.py send_test_otp +919XXXXXXXXX
 
@@ -14,7 +14,7 @@ from apps.accounts.phone import normalise_phone
 
 
 class Command(BaseCommand):
-    help = "Send a test OTP SMS using the configured OTP_PROVIDER."
+    help = "Send a test OTP using the configured OTP_PROVIDER."
 
     def add_arguments(self, parser):
         parser.add_argument("phone")
@@ -30,4 +30,4 @@ class Command(BaseCommand):
             get_provider().send(number, code)
         except OTPDeliveryError as exc:
             raise CommandError(f"Delivery failed: {exc} (see the server log for the provider's reason)") from exc
-        self.stdout.write(self.style.SUCCESS("Accepted by provider. Check the phone for the SMS."))
+        self.stdout.write(self.style.SUCCESS("Accepted by provider. Check the phone for the message."))

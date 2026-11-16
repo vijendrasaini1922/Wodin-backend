@@ -1,4 +1,4 @@
-"""OTP generation/verification and the pluggable SMS provider interface."""
+"""OTP generation/verification and the pluggable delivery provider interface (WhatsApp, MSG91 SMS)."""
 import hashlib
 import hmac
 import logging
@@ -35,7 +35,47 @@ class DummyOTPProvider(OTPProvider):
 
 
 class OTPDeliveryError(Exception):
-    """The SMS provider could not deliver the code (never includes secrets)."""
+    """The provider could not deliver the code (never includes secrets)."""
+
+
+class WhatsAppOTPProvider(OTPProvider):
+    """WhatsApp Cloud API (Meta). No DLT; needs an approved AUTHENTICATION template; see docs/WHATSAPP.md.
+
+    The template body carries the code and its "copy code" button needs the same code as a URL-button parameter.
+    """
+
+    def send(self, phone, code):
+        token, phone_id, template = (settings.WHATSAPP_ACCESS_TOKEN, settings.WHATSAPP_PHONE_NUMBER_ID,
+                                     settings.WHATSAPP_TEMPLATE_NAME)
+        if not token or not phone_id or not template:
+            raise OTPDeliveryError(
+                "WhatsApp is not configured (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_TEMPLATE_NAME)."
+            )
+        url = f"https://graph.facebook.com/{settings.WHATSAPP_API_VERSION}/{phone_id}/messages"
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone.lstrip("+"),
+            "type": "template",
+            "template": {
+                "name": template,
+                "language": {"code": settings.WHATSAPP_TEMPLATE_LANG},
+                "components": [
+                    {"type": "body", "parameters": [{"type": "text", "text": code}]},
+                    {"type": "button", "sub_type": "url", "index": "0", "parameters": [{"type": "text", "text": code}]},
+                ],
+            },
+        }
+        try:
+            resp = requests.post(url, json=payload, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            body = resp.json() if resp.content else {}
+        except (requests.RequestException, ValueError) as exc:
+            log.error("WhatsApp request failed: %s", exc.__class__.__name__)
+            raise OTPDeliveryError("Could not reach WhatsApp.") from exc
+        if resp.status_code >= 400 or not body.get("messages"):
+            err = body.get("error", {}) if isinstance(body, dict) else {}
+            log.error("WhatsApp rejected the OTP (HTTP %s, code %s): %s", resp.status_code, err.get("code"),
+                      err.get("message", "no message"))
+            raise OTPDeliveryError("WhatsApp rejected the request.")
 
 
 class MSG91OTPProvider(OTPProvider):
@@ -67,6 +107,8 @@ class MSG91OTPProvider(OTPProvider):
 
 
 def get_provider() -> OTPProvider:
+    if settings.OTP_PROVIDER == "whatsapp":
+        return WhatsAppOTPProvider()
     if settings.OTP_PROVIDER == "msg91":
         return MSG91OTPProvider()
     if settings.OTP_PROVIDER == "dummy":

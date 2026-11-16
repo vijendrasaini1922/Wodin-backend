@@ -293,12 +293,14 @@ class Book:
     # ---- page builder ----
     def focus_for(self, p: PhotoInfo, slot: dict) -> tuple[float, float]:
         """Where to centre the crop. With a subject box the crop keeps the whole subject (heads first); otherwise the AI's focus point."""
-        if p.subject is None:
-            return p.focus
-        x0, y0, wf, hf = cropping.window(p.ratio, layouts.slot_ratio(slot, self.aspect), p.focus, p.subject)
-        fx = x0 / (1 - wf) if wf < 0.999 else p.focus[0]
-        fy = y0 / (1 - hf) if hf < 0.999 else p.focus[1]
-        return min(1.0, max(0.0, fx)), min(1.0, max(0.0, fy))
+        if p.subject is not None:
+            sx0, sy0, sx1, sy1 = p.subject
+            fx = (sx0 + sx1) / 2
+            fy = sy0 + (sy1 - sy0) * 0.25
+            return min(1.0, max(0.0, round(fx, 3))), min(1.0, max(0.0, round(fy, 3)))
+        fx = p.focus[0] if p.focus else 0.5
+        fy = p.focus[1] if p.focus else 0.20
+        return min(1.0, max(0.0, round(fx, 3))), min(1.0, max(0.0, round(fy, 3)))
 
     def page(self, number: int, key: str, assigned: list, texts: dict) -> dict:
         spec = layouts.get(key, self.aspect)

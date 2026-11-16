@@ -25,16 +25,35 @@ def window_size(src_ratio: float, slot_ratio: float) -> tuple[float, float]:
 
 
 def window(src_ratio: float, slot_ratio: float, focus: tuple[float, float] = (0.5, 0.5), subject: Box | None = None) -> tuple[float, float, float, float]:
-    """The crop as (x0, y0, width, height) in source fractions."""
+    """The crop as (x0, y0, width, height) in source fractions with face/headroom protection and human subject framing."""
     wf, hf = window_size(src_ratio, slot_ratio)
-    if subject is None:  # same as CSS object-position: the focus point keeps its relative place in the frame
-        return (1 - wf) * _clamp(focus[0], 0, 1), (1 - hf) * _clamp(focus[1], 0, 1), wf, hf
+    fx = _clamp(focus[0], 0, 1)
+    fy = _clamp(focus[1], 0, 1)
+    if subject is None:
+        if wf < 0.999:
+            x0 = _clamp(fx - wf / 2, 0, 1 - wf)
+        else:
+            x0 = 0.0
+        if hf < 0.999:
+            # When cropping vertically, focus on faces/humans (usually upper 0.15-0.35)
+            if 0.40 <= fy <= 0.60:
+                y0 = _clamp(0.06, 0, 1 - hf)
+            else:
+                y0 = _clamp(fy - hf * 0.28, 0, 1 - hf)
+        else:
+            y0 = 0.0
+        return x0, y0, wf, hf
     sx0, sy0, sx1, sy1 = subject
-    x0 = _clamp((sx0 + sx1) / 2 - wf / 2, 0, 1 - wf)
-    if sy1 - sy0 > hf:  # the subject is taller than the frame: keep the head (top), lose the lowest part first
-        y0 = _clamp(sy0 - 0.03, 0, 1 - hf)
+    scx = (sx0 + sx1) / 2
+    x0 = _clamp(scx - wf / 2, 0, 1 - wf)
+    sh = sy1 - sy0
+    if sh >= hf:  # the subject is taller than the frame: keep the head (top with safe headroom), lose the lowest part first
+        y0 = _clamp(sy0 - 0.05, 0, 1 - hf)
     else:
-        y0 = _clamp((sy0 + sy1) / 2 - hf / 2, 0, 1 - hf)
+        # Subject fits vertically: center subject with natural headroom, ensuring head is not cut off
+        scy = (sy0 + sy1) / 2
+        target_y0 = scy - hf * 0.38
+        y0 = _clamp(min(target_y0, sy0 - 0.03), 0, 1 - hf)
     return x0, y0, wf, hf
 
 

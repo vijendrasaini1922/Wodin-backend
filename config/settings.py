@@ -145,6 +145,9 @@ REST_FRAMEWORK = {
         "user": os.getenv("USER_RATE", "5000/min" if DEBUG else "600/min"),
         "otp_request": os.getenv("OTP_REQUEST_RATE", "200/hour" if DEBUG else "5/hour"),
         "otp_verify": os.getenv("OTP_VERIFY_RATE", "200/hour" if DEBUG else "20/hour"),
+        "google_login": os.getenv("GOOGLE_LOGIN_RATE", "200/hour" if DEBUG else "30/hour"),
+        "password_login": os.getenv("PASSWORD_LOGIN_RATE", "200/hour" if DEBUG else "20/hour"),
+        "password_set": os.getenv("PASSWORD_SET_RATE", "200/hour" if DEBUG else "20/hour"),
         "contact": "10/hour",
     },
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
@@ -177,6 +180,13 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "WoDin <no-reply@wodin.exam
 OTP_PROVIDER = os.getenv("OTP_PROVIDER", "console")
 MSG91_AUTH_KEY = os.getenv("MSG91_AUTH_KEY", "")
 MSG91_TEMPLATE_ID = os.getenv("MSG91_TEMPLATE_ID", "")
+# Sign in with Google: the OAuth "Web application" client ID from Google Cloud Console (public, not a secret).
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_TEMPLATE_NAME = os.getenv("WHATSAPP_TEMPLATE_NAME", "")
+WHATSAPP_TEMPLATE_LANG = os.getenv("WHATSAPP_TEMPLATE_LANG", "en")
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v21.0")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini" if GEMINI_API_KEY else "mock")  # gemini | mock (DEBUG only)

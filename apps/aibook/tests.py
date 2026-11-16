@@ -445,6 +445,54 @@ class GenerationTests(AIBookBase):
         self.assertEqual(detail_res.status_code, 200)
         self.assertEqual(detail_res.data["project_id"], str(project.id))
 
+        # Test GET /api/design/projects/<id>/ai-book-pages/
+        mapped_res = self.c.get(f"/api/design/projects/{project.id}/ai-book-pages/")
+        self.assertEqual(mapped_res.status_code, 200)
+        self.assertGreater(len(mapped_res.data), 0)
+
+        # Test GET /api/aibooks/<id>/pages/
+        pages_res = self.c.get(f"/api/aibooks/{book.id}/pages/")
+        self.assertEqual(pages_res.status_code, 200)
+        self.assertIn("pages", pages_res.data)
+        self.assertIn("photos", pages_res.data)
+
+        # Test PUT /api/aibooks/<id>/pages/ to edit texts and re-render
+        edited_pages = pages_res.data["pages"]
+        edited_pages[0]["elements"].append({
+            "kind": "text", "text": "Edited Cover Title", "x": 0.1, "y": 0.5, "w": 0.8, "h": 0.2, "z": 10,
+            "style": {"role": "title", "variant": "script", "size": "xl"}
+        })
+        # Test editing photo element style with zoom, fit, and focal point
+        for el in edited_pages[0]["elements"]:
+            if el["kind"] == "photo":
+                el["style"] = {
+                    "zoom": 1.5,
+                    "offset_x": 0.05,
+                    "offset_y": -0.05,
+                    "fit": "contain",
+                    "focus": [0.45, 0.25],
+                    "frame": "polaroid",
+                    "rotate": 2.0,
+                }
+        put_res = self.c.put(f"/api/aibooks/{book.id}/pages/", edited_pages, format="json")
+        self.assertEqual(put_res.status_code, 200)
+        book.refresh_from_db()
+        self.assertEqual(book.status, "ready")
+        self.assertGreater(book.pdf_size, 0)
+
+    def test_photo_renderer_zoom_and_fit_modes(self):
+        from apps.aibook.render import _fit_image, PageRenderer
+        test_img = Image.new("RGB", (1200, 800), (100, 150, 200))
+        # Cover fit with face focus
+        cover_out = _fit_image(test_img, 400, 600, focus=(0.5, 0.2), zoom=1.0, fit="cover")
+        self.assertEqual(cover_out.size, (400, 600))
+        # Contain fit (best fit whole photo)
+        contain_out = _fit_image(test_img, 600, 400, focus=(0.5, 0.5), zoom=1.0, fit="contain")
+        self.assertEqual(contain_out.size, (600, 400))
+        # Zoomed in 2.0x with pan offsets
+        zoomed_out = _fit_image(test_img, 500, 500, focus=(0.6, 0.3), zoom=2.0, offset_x=0.1, offset_y=-0.1, fit="cover")
+        self.assertEqual(zoomed_out.size, (500, 500))
+
 
 class PlannerBorderlessTests(APITestCase):
     def infos(self, n, land=True):
@@ -516,3 +564,61 @@ class RendererTests(APITestCase):
         reader = PdfReader(io.BytesIO(pdf))
         self.assertEqual(len(reader.pages), 2)
         self.assertLess(float(reader.pages[0].trimbox.width), float(reader.pages[0].mediabox.width))
+
+
+class ProjectShapeTests(AIBookBase):
+    """A book made from a customer's project follows the shape they bought. Staff cannot change it."""
+
+    def setUp(self):
+        super().setUp()
+        from decimal import Decimal
+        from apps.catalog.models import Product, ProductVariant
+        from apps.photos.models import Photo
+        self.customer = User.objects.create_user("+919999999998")
+        trip = Trip.objects.create(user=self.customer, title="Goa Sunsets", destinations=["Goa"], description="Beach days with friends.")
+        product = Product.objects.create(name="Photobook", slug="photobook-shape")
+        variant = ProductVariant.objects.create(
+            product=product, name="A4 Landscape", base_page_count=20, allowed_page_counts=[20, 24], base_price=Decimal("1999"),
+            additional_copy_price=Decimal("1500"), trim_width_mm=Decimal("297.0"), trim_height_mm=Decimal("210.0"),
+        )
+        self.project = BookProject.objects.create(user=self.customer, trip=trip, variant=variant, page_count=20, status=BookProject.Status.DESIGN)
+        storage = get_storage()
+        for i in range(6):
+            key = f"users/{self.customer.id}/trips/{trip.id}/photos/p{i}/original.jpg"
+            storage.save(key, jpeg(color=(60 + i * 20, 90, 150), seed=i + 1), "image/jpeg")
+            Photo.objects.create(user=self.customer, trip=trip, original_filename=f"photo_{i}.jpg", content_type="image/jpeg",
+                                 original_key=key, status=Photo.Status.READY, position=i)
+
+    def test_project_size_follows_the_variant(self):
+        from decimal import Decimal
+        self.assertEqual(services.project_size(self.project), AIBook.Size.LANDSCAPE)
+        self.project.variant.trim_width_mm, self.project.variant.trim_height_mm = Decimal("203.2"), Decimal("203.2")
+        self.assertEqual(services.project_size(self.project), AIBook.Size.SQUARE)
+        self.project.variant.trim_width_mm, self.project.variant.trim_height_mm = Decimal("210.0"), Decimal("297.0")
+        self.assertEqual(services.project_size(self.project), AIBook.Size.PORTRAIT)
+
+    def test_staff_size_is_ignored_and_book_follows_the_customer(self):
+        res = self.c.post(f"/api/design/projects/{self.project.id}/ai-book/", {"size": "square", "allow_questions": False}, format="json")
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(res.data["size"], AIBook.Size.LANDSCAPE)
+        self.assertEqual(AIBook.objects.get(pk=res.data["id"]).size, AIBook.Size.LANDSCAPE)
+
+    def test_pages_from_a_book_of_another_shape_are_not_applied(self):
+        book = AIBook.objects.create(user=self.user, project=self.project, status=AIBook.Status.READY, size=AIBook.Size.SQUARE,
+                                     pages=[{"number": 0, "layout": "cover", "elements": []}])
+        res = self.c.get(f"/api/design/projects/{self.project.id}/ai-book-pages/")
+        self.assertEqual(res.status_code, 400, res.content)
+        book.size = AIBook.Size.LANDSCAPE
+        book.save(update_fields=["size"])
+        self.assertEqual(self.c.get(f"/api/design/projects/{self.project.id}/ai-book-pages/").status_code, 200)
+
+    def test_size_cannot_change_on_a_project_linked_book(self):
+        res = self.c.post(f"/api/design/projects/{self.project.id}/ai-book/", {"allow_questions": False}, format="json")
+        bid = res.data["id"]
+        self.assertEqual(self.c.patch(f"/api/aibooks/{bid}/", {"size": "portrait"}, format="json").status_code, 400)
+        self.assertEqual(self.c.patch(f"/api/aibooks/{bid}/", {"size": "landscape"}, format="json").status_code, 200)
+
+    def test_standalone_book_can_still_choose_its_size(self):
+        bid = self.new_book(size="square")
+        self.assertEqual(self.c.get(f"/api/aibooks/{bid}/").data["size"], "square")
+

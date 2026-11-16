@@ -65,6 +65,7 @@ class AIBookPhoto(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     book = models.ForeignKey(AIBook, on_delete=models.CASCADE, related_name="photos")
+    trip_photo_id = models.UUIDField(null=True, blank=True)
     original_filename = models.CharField(max_length=255)
     content_type = models.CharField(max_length=40)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)

@@ -67,9 +67,9 @@ Think like a magazine editor:
   best_for_closing: a calm or glowing photo suited to the last page (sunset, silhouette, view).
 - photos: for EVERY photo give caption (max 10 words), mood (one or two words), quality_issue (none, blurry, dark,
   overexposed, duplicate_of_other), focus_x / focus_y: where the main subject or face sits in the frame, from 0 to 1
-  (0.5, 0.5 = centre; faces high in the frame have a small focus_y), and subject_x0, subject_y0, subject_x1, subject_y1:
-  one box (0 to 1, top-left to bottom-right) around the main subject. When people are the subject the box MUST include
-  their heads and faces as well as their bodies. Leave the four values out for scenery with no clear subject.
+  (CRITICAL: whenever people or humans are in the photo, focus_x and focus_y MUST be placed directly on the primary human faces/eyes,
+  typically 0.15 to 0.35, never empty background or sky), and subject_x0, subject_y0, subject_x1, subject_y1: one box (0 to 1,
+  top-left to bottom-right) tightly enclosing all human subjects/faces with a small top headroom margin.
 - facts: places (names the customer gave or that are unmistakable), travellers (first names the customer gave),
   dates (a short readable range like "1 - 6 May 2025", only if the customer gave it). Leave empty when unknown.
 If the trip details contain a "brief" and "answers", they are the customer's wishes for tone, language, structure and

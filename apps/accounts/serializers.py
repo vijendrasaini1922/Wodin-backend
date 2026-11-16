@@ -11,14 +11,26 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(required=False)
+    # Google-only accounts have a placeholder in User.phone; clients only ever see the real number (or "").
+    phone = serializers.CharField(source="display_phone", read_only=True)
+    has_google = serializers.SerializerMethodField()
+    has_password = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "phone", "full_name", "email", "role", "is_guest", "profile"]
-        read_only_fields = ["id", "phone", "role", "is_guest"]
+        fields = ["id", "phone", "full_name", "email", "role", "is_guest", "has_google", "has_password", "profile"]
+        read_only_fields = ["id", "phone", "role", "is_guest", "has_google", "has_password"]
+
+    def get_has_google(self, obj) -> bool:
+        return bool(obj.google_sub)
+
+    def get_has_password(self, obj) -> bool:
+        return obj.has_usable_password()
 
     def update(self, instance, validated):
         profile = validated.pop("profile", None)
+        if instance.google_sub:
+            validated.pop("email", None)  # Google-verified email is the login identity; it cannot be edited
         for k, v in validated.items():
             setattr(instance, k, v)
         instance.save()
@@ -48,3 +60,18 @@ class OTPRequestSerializer(serializers.Serializer):
 class OTPVerifySerializer(serializers.Serializer):
     phone = serializers.CharField()
     code = serializers.RegexField(r"^\d{6}$")
+
+
+class GoogleLoginSerializer(serializers.Serializer):
+    credential = serializers.CharField(max_length=4096)
+
+
+class PasswordLoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(max_length=128, trim_whitespace=False)
+
+
+class SetPasswordSerializer(serializers.Serializer):
+    # Required only when the account already has a password (checked in the view).
+    current_password = serializers.CharField(max_length=128, trim_whitespace=False, required=False, allow_blank=True)
+    new_password = serializers.CharField(max_length=128, trim_whitespace=False)

@@ -39,10 +39,15 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """Authentication identity: a verified mobile number in E.164 format."""
+    """Authentication identity: a verified mobile number in E.164 format, or a Google account.
+
+    Google accounts have no phone yet: `phone` holds a unique placeholder ("g:...") and `google_sub` (Google's stable
+    user id) identifies them. Use `display_phone` whenever a real number is needed.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phone = models.CharField(max_length=16, unique=True)
+    google_sub = models.CharField(max_length=64, unique=True, null=True, blank=True)
     full_name = models.CharField(max_length=120, blank=True)
     email = models.EmailField(blank=True)
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.CUSTOMER)
@@ -56,7 +61,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
 
     def __str__(self):
-        return self.full_name or self.phone
+        return self.full_name or self.display_phone or self.email or self.phone
+
+    @property
+    def display_phone(self) -> str:
+        """The real E.164 number, or "" for guests, Google-only and deleted accounts."""
+        return self.phone if self.phone.startswith("+") else ""
 
     @property
     def is_backoffice(self) -> bool:

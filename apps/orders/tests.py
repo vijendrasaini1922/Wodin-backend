@@ -67,7 +67,7 @@ class OrderTests(ProjectBase):
             set_status(order, "dispatched")
 
     def test_cancel_only_before_payment(self):
-        _, order = self.submit()
+        pid, order = self.submit()
         order = Order.objects.get(pk=order.pk)
         Order.objects.filter(pk=order.pk).update(status="paid")
         order.refresh_from_db()
@@ -75,7 +75,10 @@ class OrderTests(ProjectBase):
             cancel(order, self.customer)
         Order.objects.filter(pk=order.pk).update(status="design")
         order.refresh_from_db()
-        self.assertEqual(cancel(order, self.customer).status, "cancelled")
+        cancelled_order = cancel(order, self.customer)
+        self.assertEqual(cancelled_order.status, "cancelled")
+        from apps.projects.models import BookProject
+        self.assertEqual(BookProject.objects.get(pk=pid).status, "cancelled")
 
     def test_my_orders_scoped_and_timeline(self):
         _, order = self.submit()
@@ -167,6 +170,32 @@ class GuestCheckoutTests(ProjectBase):
         self.assertEqual(order.contact_phone, phone)
         self.assertEqual(APIClient().get(f"/api/orders/track/{tracking_token(order)}/").status_code, 200)
         self.assertEqual(guest_client.get("/api/orders/").data["count"], 1)
+
+    def test_google_account_without_phone_can_order_and_gets_email_only(self):
+        from django.core import mail
+        google_user = User.objects.create_user("g:abc123", google_sub="sub-1", email="asha@example.com", full_name="Asha")
+        trip = Trip.objects.create(user=google_user, title="Goa", destinations=["Goa"])
+        from apps.photos.models import Photo
+        Photo.objects.create(user=google_user, trip=trip, original_filename="a.jpg", content_type="image/jpeg",
+                             original_key="g/o.jpg", status=Photo.Status.READY)
+        c = APIClient(); c.force_authenticate(google_user)
+        pid = c.post("/api/projects/", {"trip": str(trip.id), "variant": self.variant.pk, "page_count": 20}, format="json").data["id"]
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            with self.captureOnCommitCallbacks(execute=True):
+                r = c.post(f"/api/projects/{pid}/submit/")
+        self.assertEqual(r.status_code, 200, r.content)
+        order = Order.objects.get(pk=r.data["order_id"])
+        self.assertEqual((order.contact_phone, order.contact_email), ("", "asha@example.com"))
+        from apps.notifications.models import Notification
+        self.assertEqual(Notification.objects.filter(order=order, channel="sms").count(), 0)
+        self.assertEqual(len(mail.outbox), 1)
+
+        # the delivery contact number becomes the order contact once an address is chosen
+        addr = {"recipient_name": "Asha", "phone": "+919876543210", "line1": "1 MG Road", "city": "Pune",
+                "state": "Maharashtra", "pincode": "411001"}
+        self.assertEqual(c.post(f"/api/orders/{order.id}/address/", {"address": addr}, format="json").status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.contact_phone, "+919876543210")
 
     def test_guest_endpoint_idempotent_for_logged_in_user(self):
         r = self.cust.post("/api/auth/guest/")

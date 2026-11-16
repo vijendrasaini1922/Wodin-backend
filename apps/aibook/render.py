@@ -75,15 +75,71 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
     return lines
 
 
+def _fit_image(photo: Image.Image | None, w: int, h: int, focus: tuple[float, float] | list[float] | None = None,
+               zoom: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, fit: str = "cover") -> Image.Image:
+    """Render photo into w x h box with focus, zoom, pan offset and cover/contain fit."""
+    if photo is None:
+        return Image.new("RGB", (w, h), (235, 228, 214))
+    iw, ih = photo.size
+    if iw <= 0 or ih <= 0:
+        return Image.new("RGB", (w, h), (235, 228, 214))
+
+    f = tuple(focus) if focus and len(focus) == 2 else (0.5, 0.20)
+    fx = min(1.0, max(0.0, float(f[0])))
+    fy = min(1.0, max(0.0, float(f[1])))
+    if 0.40 <= fy <= 0.60 and not focus:
+        fy = 0.20
+
+    z = max(0.2, min(5.0, float(zoom or 1.0)))
+    ox = max(-1.0, min(1.0, float(offset_x or 0.0)))
+    oy = max(-1.0, min(1.0, float(offset_y or 0.0)))
+
+    if fit in ("contain", "best_fit") and z <= 1.0:
+        base_scale = min(w / iw, h / ih)
+    else:
+        base_scale = max(w / iw, h / ih)
+
+    scale = base_scale * z
+    nw = max(1, math.ceil(iw * scale))
+    nh = max(1, math.ceil(ih * scale))
+
+    resized = photo.resize((nw, nh), Image.Resampling.LANCZOS)
+
+    # Calculate target top-left of crop inside resized image
+    target_left = int(round(fx * nw - w / 2 - ox * w))
+    target_top = int(round(fy * nh - h / 2 - oy * h))
+
+    if nw >= w:
+        crop_left = max(0, min(nw - w, target_left))
+        slot_x = 0
+        paste_w = w
+    else:
+        crop_left = 0
+        paste_w = nw
+        slot_x = max(0, min(w - nw, int(round((w - nw) / 2 + ox * w))))
+
+    if nh >= h:
+        crop_top = max(0, min(nh - h, target_top))
+        slot_y = 0
+        paste_h = h
+    else:
+        crop_top = 0
+        paste_h = nh
+        slot_y = max(0, min(h - nh, int(round((h - nh) / 2 + oy * h))))
+
+    cropped = resized.crop((crop_left, crop_top, crop_left + paste_w, crop_top + paste_h))
+
+    if fit in ("contain", "best_fit") or nw < w or nh < h:
+        bg = Image.new("RGB", (w, h), (245, 242, 236))
+        bg.paste(cropped, (slot_x, slot_y))
+        return bg
+
+    return cropped
+
+
 def _cover(img: Image.Image, w: int, h: int, focus: tuple[float, float]) -> Image.Image:
-    """Scale to fill w x h, cropping around the focus point (like CSS object-fit: cover + object-position)."""
-    iw, ih = img.size
-    scale = max(w / iw, h / ih)
-    nw, nh = max(w, math.ceil(iw * scale)), max(h, math.ceil(ih * scale))
-    img = img.resize((nw, nh), Image.Resampling.LANCZOS)
-    left = int(round((nw - w) * min(1, max(0, focus[0]))))
-    top = int(round((nh - h) * min(1, max(0, focus[1]))))
-    return img.crop((left, top, left + w, top + h))
+    """Scale to fill w x h, cropping around the focus point with face/headroom protection."""
+    return _fit_image(img, w, h, focus, zoom=1.0, offset_x=0.0, offset_y=0.0, fit="cover")
 
 
 class PageRenderer:
@@ -129,17 +185,22 @@ class PageRenderer:
         photo = self.load_photo(e["photo"]) if self.load_photo else None
         x0, y0, bw, bh = self._box(e)
         frame = st.get("frame", "none")
+        focus = st.get("focus")
+        zoom = float(st.get("zoom") or 1.0)
+        offset_x = float(st.get("offset_x") or st.get("pan_x") or 0.0)
+        offset_y = float(st.get("offset_y") or st.get("pan_y") or 0.0)
+        fit = st.get("fit") or "cover"
         unit = self.w / 100  # 1cqw
         if frame == "none":
             ex, ey, ew, eh = self._ext(e, x0, y0, bw, bh)
-            tile = self._fit(photo, ew, eh, st.get("focus"))
+            tile = self._fit(photo, ew, eh, focus, zoom=zoom, offset_x=offset_x, offset_y=offset_y, fit=fit)
             canvas.paste(tile, (ex + self.bleed, ey + self.bleed))
             return
         pad_l = pad_r = pad_t = round(unit * (1.3 if frame == "polaroid" else 1.2))
         pad_b = round(unit * (4.0 if frame == "polaroid" else 1.2))
         card = Image.new("RGBA", (bw, bh), (255, 255, 255, 255))
         iw, ih = max(1, bw - pad_l - pad_r), max(1, bh - pad_t - pad_b)
-        card.paste(self._fit(photo, iw, ih, st.get("focus")), (pad_l, pad_t))
+        card.paste(self._fit(photo, iw, ih, focus, zoom=zoom, offset_x=offset_x, offset_y=offset_y, fit=fit), (pad_l, pad_t))
         caption = (e.get("text") or "").strip()
         if caption and frame == "polaroid":
             self._caption(card, caption, pad_b, pad_l, unit)
@@ -177,11 +238,8 @@ class PageRenderer:
             x = (card.width - d.textlength(text, font=font)) / 2
             d.text((x, card.height - pad_b + (pad_b - size) / 2 - size * 0.12), text, font=font, fill=INK + (255,))
 
-    def _fit(self, photo, w, h, focus) -> Image.Image:
-        if photo is None:
-            return Image.new("RGB", (w, h), (235, 228, 214))
-        f = tuple(focus) if focus and len(focus) == 2 else (0.5, 0.5)
-        return _cover(photo, w, h, (float(f[0]), float(f[1])))
+    def _fit(self, photo, w, h, focus, zoom: float = 1.0, offset_x: float = 0.0, offset_y: float = 0.0, fit: str = "cover") -> Image.Image:
+        return _fit_image(photo, w, h, focus, zoom=zoom, offset_x=offset_x, offset_y=offset_y, fit=fit)
 
     # ----- scrims: one per side (widest wins), same rule as the browser preview -----
     def _scrims(self, els):
@@ -474,7 +532,7 @@ def page_pdf(img: Image.Image, dpi: int, quality: int = 88) -> bytes:
 
 
 def merge_pdfs(pages: list[bytes], dpi: int, bleed_px: int) -> bytes:
-    """Merge one-page PDFs and set BleedBox/TrimBox so a printer can see where the page will be cut."""
+    """Merge one-page PDFs and set CropBox/BleedBox/TrimBox so a printer can see where the page will be cut."""
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import RectangleObject
 
@@ -485,6 +543,7 @@ def merge_pdfs(pages: list[bytes], dpi: int, bleed_px: int) -> bytes:
     for page in writer.pages:
         W, H, b = float(page.mediabox.width), float(page.mediabox.height), bleed_px * pt
         page.bleedbox = RectangleObject([0, 0, W, H])
+        page.cropbox = RectangleObject([b, b, W - b, H - b])
         page.trimbox = RectangleObject([b, b, W - b, H - b])
     writer.add_metadata({"/Title": "WoDin photobook", "/Producer": "WoDin"})
     out = io.BytesIO()

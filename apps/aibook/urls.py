@@ -8,6 +8,7 @@ urlpatterns = [
     path("aibooks/photos/<uuid:photo_id>/complete/", views.CompletePhotoView.as_view()),
     path("aibooks/photos/<uuid:photo_id>/", views.PhotoDeleteView.as_view()),
     path("aibooks/<uuid:pk>/", views.BookDetailView.as_view()),
+    path("aibooks/<uuid:pk>/pages/", views.BookPagesView.as_view()),
     path("aibooks/<uuid:pk>/photos/", views.BookPhotosView.as_view()),
     path("aibooks/<uuid:pk>/photos/upload-urls/", views.UploadUrlsView.as_view()),
     path("aibooks/<uuid:pk>/start/", views.StartView.as_view()),

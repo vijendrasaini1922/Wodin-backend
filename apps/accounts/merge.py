@@ -1,4 +1,4 @@
-"""Account linking: move a guest's data to the verified account once the same person proves a phone number."""
+"""Account linking: move a guest's data to the signed-in account once the same person verifies (Google or phone OTP)."""
 from django.apps import apps
 
 
@@ -9,7 +9,7 @@ def merge_guest_into(guest, user) -> None:
                          ("orders.Order", "user"), ("accounts.Address", "user")]:
         apps.get_model(label).objects.filter(**{field: guest}).update(**{field: user})
     for order in apps.get_model("orders.Order").objects.filter(user=user, contact_phone__startswith="guest:"):
-        order.contact_phone = user.phone
+        order.contact_phone = user.display_phone
         order.save(update_fields=["contact_phone"])
     if not user.full_name and guest.full_name:
         user.full_name = guest.full_name

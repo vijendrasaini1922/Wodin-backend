@@ -117,12 +117,15 @@ class DesignerProjectViewSet(viewsets.GenericViewSet):
     serializer_class = ProjectSerializer
 
     def get_queryset(self):
-        return BookProject.objects.exclude(status=BookProject.Status.DRAFT)
+        status_param = self.request.query_params.get("status") if hasattr(self, "request") and self.request else None
+        if status_param == BookProject.Status.CANCELLED:
+            return BookProject.objects.filter(status=BookProject.Status.CANCELLED)
+        if status_param:
+            return BookProject.objects.filter(status=status_param)
+        return BookProject.objects.exclude(status__in=[BookProject.Status.DRAFT, BookProject.Status.CANCELLED])
 
     def list(self, request):
         qs = self.get_queryset().order_by("updated_at")
-        if request.query_params.get("status"):
-            qs = qs.filter(status=request.query_params["status"])
         return Response(ProjectSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"])
@@ -175,9 +178,15 @@ class DesignerProjectViewSet(viewsets.GenericViewSet):
         if request.method == "POST":
             allow_questions = request.data.get("allow_questions", True)
             premium = request.data.get("premium", True)
+            prompt = request.data.get("prompt")
+            title = request.data.get("title")
+            page_count = request.data.get("page_count")
             book = aibook_services.create_from_project(
                 project=project,
                 user=request.user,
+                prompt=prompt,
+                title=title,
+                page_count=page_count,
                 allow_questions=bool(allow_questions),
                 premium=bool(premium),
                 auto_start=True,
@@ -188,3 +197,27 @@ class DesignerProjectViewSet(viewsets.GenericViewSet):
         if not latest:
             return Response(None, status=status.HTTP_200_OK)
         return Response(_detail(latest))
+
+    @action(detail=True, methods=["get"], url_path="ai-book-pages")
+    def ai_book_pages(self, request, pk=None):
+        from apps.aibook import services as aibook_services
+        project = self.get_object()
+        latest = project.ai_books.filter(status="ready").first()
+        if not latest or not latest.pages:
+            raise ValidationError({"detail": "No ready AI Book pages found for this project."})
+        if latest.size != aibook_services.project_size(project):
+            raise ValidationError({"detail": "This AI Book was made for a different book shape than the customer chose. Generate a new AI Book."})
+        # Map AIBookPhoto id -> customer trip Photo id
+        id_map = {str(p.id): str(p.trip_photo_id) for p in latest.photos.filter(trip_photo_id__isnull=False)}
+        mapped_pages = []
+        for p in latest.pages:
+            page_copy = {**p}
+            elements_copy = []
+            for e in p.get("elements", []):
+                el_copy = {**e}
+                if el_copy.get("kind") == "photo" and el_copy.get("photo"):
+                    el_copy["photo"] = id_map.get(str(el_copy["photo"]), el_copy["photo"])
+                elements_copy.append(el_copy)
+            page_copy["elements"] = elements_copy
+            mapped_pages.append(page_copy)
+        return Response(mapped_pages)

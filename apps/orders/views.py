@@ -39,7 +39,9 @@ class OrderViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Ge
         order.shipping_address = {k: str(v) for k, v in snapshot.items() if k != "id"}
         if "contact_email" in data:
             order.contact_email = data["contact_email"]
-        order.save(update_fields=["shipping_address", "contact_email", "updated_at"])
+        if not order.contact_phone:  # Google-only account: the delivery contact number becomes the order contact
+            order.contact_phone = order.shipping_address.get("phone", "")[:16]
+        order.save(update_fields=["shipping_address", "contact_email", "contact_phone", "updated_at"])
         return Response(OrderSerializer(order).data)
 
     @action(detail=True, methods=["post"])

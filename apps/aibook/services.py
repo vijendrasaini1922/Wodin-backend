@@ -42,11 +42,33 @@ def aspect(book: AIBook) -> float:
     return w / h
 
 
+def project_size(project):
+    """The shape the customer bought, from the variant's trim: landscape, square or portrait."""
+    variant = getattr(project, "variant", None)
+    if not (variant and variant.trim_height_mm and variant.trim_width_mm):
+        return AIBook.Size.PORTRAIT
+    ratio = float(variant.trim_width_mm) / float(variant.trim_height_mm)
+    if ratio > 1.15:
+        return AIBook.Size.LANDSCAPE
+    if ratio < 0.85:
+        return AIBook.Size.PORTRAIT
+    return AIBook.Size.SQUARE
+
+
 def storage_prefix(book: AIBook) -> str:
     return f"aibooks/{book.user_id}/{book.id}"
 
 
-def create_from_project(project, user, allow_questions: bool = True, premium: bool = True, auto_start: bool = True) -> AIBook:
+def create_from_project(
+    project,
+    user,
+    prompt: str | None = None,
+    title: str | None = None,
+    page_count: int | None = None,
+    allow_questions: bool = True,
+    premium: bool = True,
+    auto_start: bool = True,
+) -> AIBook:
     """Create an AIBook directly from a customer's BookProject (trip + uploaded photos)."""
     from . import tasks
 
@@ -55,54 +77,53 @@ def create_from_project(project, user, allow_questions: bool = True, premium: bo
     if not trip_photos:
         raise ValidationError({"detail": "This project has no ready photos to generate an AI book from."})
 
-    # Determine size/shape from product variant
-    variant = getattr(project, "variant", None)
-    if variant and variant.trim_height_mm and variant.trim_width_mm:
-        ratio = float(variant.trim_width_mm) / float(variant.trim_height_mm)
-        if ratio > 1.15:
-            size = AIBook.Size.LANDSCAPE
-        elif ratio < 0.85:
-            size = AIBook.Size.PORTRAIT
-        else:
-            size = AIBook.Size.SQUARE
+    book_size = project_size(project)
+
+    book_title = (title or trip.cover_title or trip.title or "Travel Memories").strip()
+    if not prompt:
+        prompt_parts = []
+        if trip.description:
+            prompt_parts.append(trip.description.strip())
+        if trip.destinations:
+            places = ", ".join(str(d) for d in trip.destinations if d)
+            if places:
+                prompt_parts.append(f"Destinations: {places}")
+        if trip.companions:
+            folks = ", ".join(str(c) for c in trip.companions if c)
+            if folks:
+                prompt_parts.append(f"Travelled with: {folks}")
+        if trip.start_date or trip.end_date:
+            dates = []
+            if trip.start_date:
+                dates.append(str(trip.start_date))
+            if trip.end_date:
+                dates.append(str(trip.end_date))
+            prompt_parts.append(f"Dates: {' to '.join(dates)}")
+        if trip.special_message:
+            prompt_parts.append(f"Special message: {trip.special_message.strip()}")
+        if trip.dedication:
+            prompt_parts.append(f"Dedication: {trip.dedication.strip()}")
+
+        book_prompt = "\n".join(prompt_parts).strip()
+        if len(book_prompt) < 10:
+            book_prompt = f"Travel photobook for {book_title}. Create an art-directed story of our journey."
     else:
-        size = AIBook.Size.PORTRAIT
+        book_prompt = str(prompt).strip()
 
-    title = (trip.cover_title or trip.title or "Travel Memories").strip()
-    prompt_parts = []
-    if trip.description:
-        prompt_parts.append(trip.description.strip())
-    if trip.destinations:
-        places = ", ".join(str(d) for d in trip.destinations if d)
-        if places:
-            prompt_parts.append(f"Destinations: {places}")
-    if trip.companions:
-        folks = ", ".join(str(c) for c in trip.companions if c)
-        if folks:
-            prompt_parts.append(f"Travelled with: {folks}")
-    if trip.start_date or trip.end_date:
-        dates = []
-        if trip.start_date:
-            dates.append(str(trip.start_date))
-        if trip.end_date:
-            dates.append(str(trip.end_date))
-        prompt_parts.append(f"Dates: {' to '.join(dates)}")
-    if trip.special_message:
-        prompt_parts.append(f"Special message: {trip.special_message.strip()}")
-    if trip.dedication:
-        prompt_parts.append(f"Dedication: {trip.dedication.strip()}")
-
-    prompt = "\n".join(prompt_parts).strip()
-    if len(prompt) < 10:
-        prompt = f"Travel photobook for {title}. Create an art-directed story of our journey."
+    if page_count is not None and str(page_count).isdigit():
+        pages_num = int(page_count)
+    elif page_count is None:
+        pages_num = project.page_count
+    else:
+        pages_num = None
 
     book = AIBook.objects.create(
         user=user,
         project=project,
-        title=title[:120],
-        prompt=prompt[:4000],
-        size=size,
-        page_count=project.page_count,
+        title=book_title[:120],
+        prompt=book_prompt[:4000],
+        size=book_size,
+        page_count=pages_num,
         allow_questions=allow_questions,
         premium=premium,
     )
@@ -124,6 +145,7 @@ def create_from_project(project, user, allow_questions: bool = True, premium: bo
         ai_photo = AIBookPhoto.objects.create(
             id=pid,
             book=book,
+            trip_photo_id=p.id,
             original_filename=p.original_filename,
             content_type=p.content_type,
             original_key=target_key,

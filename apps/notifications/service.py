@@ -42,7 +42,7 @@ def notify_order(order, kind: str) -> list[Notification]:
     out = []
     user = order.user
     consent = True if user is None or not hasattr(user, "profile") else user.profile.transactional_consent
-    channels = [(Notification.Channel.SMS, order.contact_phone)]
+    channels = [(Notification.Channel.SMS, order.contact_phone)] if order.contact_phone else []  # Google-only accounts have no phone yet
     if order.contact_email:
         channels.append((Notification.Channel.EMAIL, order.contact_email))
     for channel, recipient in channels:

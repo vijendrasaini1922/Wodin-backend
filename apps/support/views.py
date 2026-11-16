@@ -25,7 +25,7 @@ class MyTicketViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.Ret
         message = serializer.validated_data.pop("message")
         user = self.request.user
         ticket = serializer.save(
-            user=user, contact_phone=serializer.validated_data.get("contact_phone") or ("" if user.is_guest else user.phone),
+            user=user, contact_phone=serializer.validated_data.get("contact_phone") or ("" if user.is_guest else user.display_phone),
             contact_name=serializer.validated_data.get("contact_name") or user.full_name)
         TicketMessage.objects.create(ticket=ticket, author=user, body=message)
 
